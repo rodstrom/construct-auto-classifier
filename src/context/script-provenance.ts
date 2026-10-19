@@ -55,18 +55,28 @@ export interface GitRunner {
   (args: string[], cwd: string): { status: number; stdout: string };
 }
 
+/**
+ * A hermetic environment for git subprocesses. The gate (and its tests) run
+ * inside the agent's shell, where inherited `GIT_*` variables — GIT_DIR,
+ * GIT_INDEX_FILE, GIT_CONFIG_GLOBAL, a stale GIT_CONFIG_COUNT, … — can point
+ * git at the wrong repository or index and flip a tracked script into an
+ * "untracked" one. Every GIT_* var is dropped; identity comes from `-c` flags.
+ */
+export function gitEnv(): NodeJS.ProcessEnv {
+  const env: Record<string, string> = {};
+  for (const [k, v] of Object.entries(process.env)) {
+    if (v !== undefined && !k.startsWith("GIT_")) env[k] = v;
+  }
+  // No config files at all: identity comes from `-c` flags, and reading the
+  // user's gitconfig is neither needed nor always permitted (sandboxes).
+  env.GIT_TERMINAL_PROMPT = "0";
+  env.GIT_CONFIG_GLOBAL = "/dev/null";
+  env.GIT_CONFIG_SYSTEM = "/dev/null";
+  return env;
+}
+
 export const defaultGit: GitRunner = (args, cwd) => {
-  // Git's own location variables override repository discovery from `cwd`. A
-  // host process can carry them: OpenCode keeps a snapshot repository of its own
-  // and manipulates GIT_DIR/GIT_WORK_TREE/GIT_INDEX_FILE/GIT_OBJECT_DIRECTORY
-  // around it, so an inherited GIT_DIR makes `git remote get-url origin` answer
-  // about THAT repository -- which has no `origin`, so the gate reads a
-  // sanctioned push's remote as unreadable and falsely denies it. Drop them so
-  // git always resolves the repository the cwd names. `git -c` still works (it
-  // rides in `args`, not the environment).
-  const env: NodeJS.ProcessEnv = { ...process.env };
-  for (const key of Object.keys(env)) if (/^GIT_/i.test(key)) delete env[key];
-  const r = spawnSync("git", args, { cwd, env, encoding: "utf-8", timeout: 5000, stdio: ["ignore", "pipe", "ignore"], windowsHide: true });
+  const r = spawnSync("git", args, { cwd, encoding: "utf-8", timeout: 5000, env: gitEnv(), stdio: ["ignore", "pipe", "ignore"], windowsHide: true });
   return { status: r.status ?? 1, stdout: (r.stdout ?? "").trim() };
 };
 
@@ -271,8 +281,19 @@ export function scriptProvenance(command: string, cwd: string, opts: ProvenanceO
     const read = readCapped();
     return { path: abs, exists, tracked: false, landed: false, plain, content: read?.content, truncated: read?.truncated, originalLength: read?.originalLength, withheldBytes: read?.withheldBytes, summary: `script ${abs} is not inside a git repository` };
   }
-  const repoRoot = root.stdout;
-  const repoPath = path.relative(repoRoot, abs).split(path.sep).join("/");
+  // git canonicalises the worktree through symlinks (macOS: /var -> /private/var)
+  // while `abs` keeps the caller's spelling; with the two spellings mixed,
+  // path.relative emits "../.." segments that git rejects as outside the repo.
+  // Resolve both ends to one canonical form.
+  const canon = (p: string): string => {
+    try {
+      return fs.realpathSync(p);
+    } catch {
+      return p;
+    }
+  };
+  const repoRoot = canon(root.stdout);
+  const repoPath = path.relative(repoRoot, canon(abs)).split(path.sep).join("/");
   const tracked = git(["ls-files", "--error-unmatch", "--", repoPath], repoRoot).status === 0;
   if (!tracked) {
     const read = readCapped();

@@ -2,9 +2,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { gitEnv } from "../../src/context/script-provenance.js";
 
 function git(args: string[], cwd: string): string {
-  const r = spawnSync("git", args, { cwd, encoding: "utf-8" });
+  // Hermetic env: the developer's own GIT_* variables must not steer the
+  // fixture's repositories (see gitEnv).
+  const r = spawnSync("git", args, { cwd, encoding: "utf-8", env: gitEnv() });
   if (r.status !== 0) throw new Error(`git ${args.join(" ")} failed: ${r.stderr}`);
   return r.stdout.trim();
 }
