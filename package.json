@@ -2,7 +2,7 @@
   "name": "construct-auto-classifier",
   "version": "0.4.0",
   "private": true,
-  "description": "Effect-based safety gate for AI coding agents (Antigravity, OpenCode): deterministic rules, then TypeSafe's Jev or any chat model judges what a shell command or file edit does, not what it is called.",
+  "description": "Effect-based safety gate for AI coding agents (Antigravity, OpenCode, Pi): deterministic rules, then TypeSafe's Jev or any chat model judges what a shell command or file edit does, not what it is called.",
   "license": "Apache-2.0",
   "author": "godspede",
   "repository": {
@@ -35,10 +35,11 @@
     "./opencode-plugin": {
       "types": "./dist/adapters/opencode.d.ts",
       "default": "./dist/opencode-plugin.js"
-    }
+    },
+    "./pi": "./dist/pi-plugin.js"
   },
   "scripts": {
-    "build": "bun build ./src/cli.ts --outfile ./dist/cli.js --target node && bun build ./src/adapters/opencode.ts --outfile ./dist/opencode-plugin.js --target node && bun build ./src/index.ts --outfile ./dist/index.js --target node && tsc --emitDeclarationOnly -p .",
+    "build": "bun build ./src/cli.ts --outfile ./dist/cli.js --target node && bun build ./src/adapters/opencode.ts --outfile ./dist/opencode-plugin.js --target node && bun build ./src/adapters/pi.ts --outfile ./dist/pi-plugin.js --target node --external @gotgenes/pi-permission-system && bun build ./src/index.ts --outfile ./dist/index.js --target node && tsc --emitDeclarationOnly -p .",
     "build:binary": "bun build --compile --minify ./src/cli.ts --outfile ./dist/auto-classifier",
     "test": "bun test",
     "typecheck": "tsc --noEmit -p ."

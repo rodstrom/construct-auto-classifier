@@ -280,6 +280,55 @@ OpenCode's file tools carry a target path rather than a command, so they get the
 
 `grep`, `glob` and `list` are denied when their `path` points into a credential directory (`~/.ssh`, `~/.gnupg`, …), a CLI's auth store (`~/.config/opencode`, `~/.config/gh`, …) or the gate's own config directory. A search whose scope contains one of those places, `~/.config`, `/etc` or `/proc` goes to the model; any other scope is allowed with no model call. `patch`/`apply_patch` runs every file the patch touches through the ladder: a deny on any one denies the whole patch.
 
+### 3. Pi (with @gotgenes/pi-permission-system)
+On pi the classifier does **not** gate `tool_call` itself. It registers as a named link in **pi-permission-system**'s `authorizerChain`, so the two compose instead of competing:
+
+- your permission-system **rule list runs first**: an `allow` runs, a `deny` blocks;
+- every `ask` the list cannot decide is handed to the authorizer chain, where the classifier judges it: `allow` settles the ask without a human, `deny` blocks with the classifier's reason as the teaching text the agent sees;
+- only what the classifier also cannot decide (`ask` / a repeated denial that reached the escalation threshold, `force_ask`) is deferred to your prompt.
+
+**Prerequisites**
+
+1. pi-permission-system installed: `pi install npm:@gotgenes/pi-permission-system`
+2. This repo built: `bun run build` (produces `dist/pi-plugin.js`)
+
+**Install**
+
+A file path loads one extension:
+
+```bash
+pi install /path/to/construct-auto-classifier/dist/pi-plugin.js
+```
+
+(or wrap it in a directory with a `"pi": { "extensions": [...] }` manifest to share it as a package)
+
+**Connect** — in the permission system's config, `~/.pi/agent/extensions/pi-permission-system/config.json`:
+
+```jsonc
+{
+  "authorizerChain": ["auto-classifier"]
+}
+```
+
+Registration alone grants no authority; the link decides nothing until it is named there. The classifier's own configuration is the same `auto-classifier.jsonc` as on every other harness (`~/.config/auto-classifier/config.jsonc`).
+
+**Behavior notes**
+
+- No command ask (a path, skill, …) is deferred to the rule list and your prompt: the classifier judges commands.
+- A classifier that cannot decide never consents: an internal failure denies; a thrown judgment defers to your prompt.
+- The decision trail is written to the permission system's review log (`auto-classifier:allow` / `auto-classifier:escalation` entries beside the gate decisions), and every decision still lands in `~/.config/auto-classifier/telemetry.jsonl`.
+- With the permission system not installed, the extension logs one warning and stays inert; pi's own defaults apply.
+- **Codemode**: `tools.bash(...)` calls from codemode scripts are real tool calls that run the same `tool_call` handlers, so they are gated identically (rule list → classifier → your prompt). A blocked call rejects with an `Error` in the script, which `Promise.allSettled()` handles. The `models.classify()` global is a read-only model run the gate cannot see; its only blast radius is token cost.
+
+**Testing**
+
+- Unit: `bun test` (includes `tests/pi-adapter.test.ts`, which fakes the permission-system service and covers registration, the double `permissions:ready` fire, the allow/deny/defer mapping, non-command deferral, and the missing-install degradation).
+- Smoke, in a real pi session with both extensions loaded and `authorizerChain` set:
+  1. Run a command your rule list auto-allows — it runs, no classifier traffic (check `telemetry.jsonl` for no new row).
+  2. Run a command the list cannot decide (e.g. an elevated read like `sudo systemctl status nginx`) — it should run without prompting if the classifier allows it, and a `auto-classifier:allow` review entry appears.
+  3. Ask for something the classifier denies twice (its `consecutiveThreshold`) — the third time you get the normal permission prompt, with an `auto-classifier:escalation` entry carrying the finding.
+  4. Watch `~/.config/auto-classifier/auto-classifier.log` for the `registered authorizer "auto-classifier" for session …` line at session start.
+
 ---
 
 ## Configuration (`auto-classifier.jsonc`)

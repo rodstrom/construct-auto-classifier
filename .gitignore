@@ -5,3 +5,4 @@ dist/
 .env
 .cache/
 .auto-classifier-config-test-*/
+TODO.md
