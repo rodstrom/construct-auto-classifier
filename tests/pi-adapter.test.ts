@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "bun:test";
+import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { AutoClassifier } from "../src/index.js";
 import { StateManager } from "../src/state/state-manager.js";
 import { createPiExtension } from "../src/adapters/pi.js";
@@ -83,8 +83,16 @@ function makeHarness(
   return { llm, host, registered, extension };
 }
 
+let prevLog: string | undefined;
 beforeEach(() => {
-  process.env.AUTO_CLASSIFIER_LOG = ""; // the adapter's file log is irrelevant here
+  // The adapter's file log is irrelevant here, but env is shared with the
+  // other test files in this worker: restore it afterwards.
+  prevLog = process.env.AUTO_CLASSIFIER_LOG;
+  process.env.AUTO_CLASSIFIER_LOG = "";
+});
+afterEach(() => {
+  if (prevLog === undefined) delete process.env.AUTO_CLASSIFIER_LOG;
+  else process.env.AUTO_CLASSIFIER_LOG = prevLog;
 });
 
 /** Fire ready and wait for the async handler (dynamic import + registration). */
