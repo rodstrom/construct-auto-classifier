@@ -290,17 +290,20 @@ On pi the classifier does **not** gate `tool_call` itself. It registers as a nam
 **Prerequisites**
 
 1. pi-permission-system installed: `pi install npm:@gotgenes/pi-permission-system`
-2. This repo built: `bun run build` (produces `dist/pi-plugin.js`)
 
 **Install**
 
-A file path loads one extension:
+From a git checkout (pi builds `dist/` and installs the `jiti` dependency itself):
 
 ```bash
-pi install /path/to/construct-auto-classifier/dist/pi-plugin.js
+pi install git:github.com/godspede/construct-auto-classifier
 ```
 
-(or wrap it in a directory with a `"pi": { "extensions": [...] }` manifest to share it as a package)
+From a local checkout, the built bundle (produced by `bun run build`):
+
+```bash
+pi install /path/to/construct-auto-classifier/dist/pi/pi-plugin.js
+```
 
 **Connect** — in the permission system's config, `~/.pi/agent/extensions/pi-permission-system/config.json`:
 

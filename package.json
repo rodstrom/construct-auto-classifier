@@ -17,6 +17,9 @@
     "node": ">=18",
     "bun": ">=1.2"
   },
+  "dependencies": {
+    "jiti": "^2.7.0"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -36,13 +39,17 @@
       "types": "./dist/adapters/opencode.d.ts",
       "default": "./dist/opencode-plugin.js"
     },
-    "./pi": "./dist/pi-plugin.js"
+    "./pi": "./dist/pi/pi-plugin.js"
   },
   "scripts": {
-    "build": "bun build ./src/cli.ts --outfile ./dist/cli.js --target node && bun build ./src/adapters/opencode.ts --outfile ./dist/opencode-plugin.js --target node && bun build ./src/adapters/pi.ts --outfile ./dist/pi-plugin.js --target node --external @gotgenes/pi-permission-system && bun build ./src/index.ts --outfile ./dist/index.js --target node && tsc --emitDeclarationOnly -p .",
+    "build": "bun build ./src/cli.ts --outfile ./dist/cli.js --target node && bun build ./src/adapters/opencode.ts --outfile ./dist/opencode-plugin.js --target node && bun build ./src/adapters/pi.ts --outfile ./dist/pi/pi-plugin.js --target node --external @gotgenes/pi-permission-system --external jiti && bun build ./src/index.ts --outfile ./dist/index.js --target node && tsc --emitDeclarationOnly -p .",
     "build:binary": "bun build --compile --minify ./src/cli.ts --outfile ./dist/auto-classifier",
+    "prepare": "bun run build",
     "test": "bun test",
     "typecheck": "tsc --noEmit -p ."
+  },
+  "pi": {
+    "extensions": ["./dist/pi/pi-plugin.js"]
   },
   "keywords": [
     "ai",
@@ -54,6 +61,7 @@
     "shell",
     "command-classification",
     "llm",
+    "pi-package",
     "classifier",
     "opencode",
     "antigravity",

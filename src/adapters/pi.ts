@@ -1,7 +1,8 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { createRequire } from "node:module";
+import { pathToFileURL, fileURLToPath } from "node:url";
 import { AutoClassifier } from "../index.js";
 import { log } from "../log.js";
 import { VERSION } from "../version.js";
@@ -24,6 +25,37 @@ import type { DecisionOutcome } from "../types.js";
 const PERMISSION_SYSTEM = "@gotgenes/pi-permission-system";
 const DEFAULT_LINK_NAME = "auto-classifier";
 
+/** pi's agent dir, honoring its `PI_CODING_AGENT_DIR` override. */
+function permissionSystemAgentDir(): string {
+  const envDir = process.env.PI_CODING_AGENT_DIR?.trim();
+  if (!envDir) return path.join(os.homedir(), ".pi", "agent");
+  return envDir === "~" || envDir.startsWith("~/")
+    ? path.join(os.homedir(), envDir.slice(1))
+    : envDir;
+}
+
+/**
+ * The index entry of a package, resolved the way pi's own loader aliases
+ * its packages (`exports["."].import`, then `.default`, then `main`).
+ */
+function piPackageEntry(pkgDir: string): string | null {
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(pkgDir, "package.json"), "utf8")) as {
+      exports?: unknown;
+      main?: string;
+    };
+    let entry: unknown = pkg.exports;
+    if (entry && typeof entry === "object") entry = (entry as Record<string, unknown>)["."];
+    if (entry && typeof entry === "object") {
+      entry = (entry as Record<string, unknown>)["import"] ?? (entry as Record<string, unknown>)["default"];
+    }
+    entry = entry ?? pkg.main;
+    return typeof entry === "string" ? path.join(pkgDir, entry) : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * The entry file of the permission system as installed under pi's npm
  * directory (`<agent dir>/npm/node_modules`), or null. pi loads extensions
@@ -32,27 +64,8 @@ const DEFAULT_LINK_NAME = "auto-classifier";
  * honors pi's own `PI_CODING_AGENT_DIR` override.
  */
 function permissionSystemEntry(): string | null {
-  const envDir = process.env.PI_CODING_AGENT_DIR?.trim();
-  const agentDir = envDir
-    ? envDir === "~" || envDir.startsWith("~/")
-      ? path.join(os.homedir(), envDir.slice(1))
-      : envDir
-    : path.join(os.homedir(), ".pi", "agent");
-  const pkgDir = path.join(agentDir, "npm", "node_modules", PERMISSION_SYSTEM);
-  try {
-    const pkg = JSON.parse(fs.readFileSync(path.join(pkgDir, "package.json"), "utf8")) as {
-      exports?: unknown;
-      main?: string;
-    };
-    let entry: unknown = pkg.exports;
-    if (entry && typeof entry === "object") entry = (entry as Record<string, unknown>)["."];
-    if (entry && typeof entry === "object") entry = (entry as Record<string, unknown>)["default"];
-    entry = entry ?? pkg.main;
-    if (typeof entry !== "string") return null;
-    return path.join(pkgDir, entry);
-  } catch {
-    return null;
-  }
+  const pkgDir = path.join(permissionSystemAgentDir(), "npm", "node_modules", PERMISSION_SYSTEM);
+  return piPackageEntry(pkgDir);
 }
 
 /** The module surface this adapter needs from the permission system. */
@@ -60,7 +73,81 @@ interface PermissionSystemModule {
   getPermissionsService?: (sessionId: string) => PermissionService | undefined;
 }
 
-/** Load the permission system: bare import first, then pi's npm directory. */
+/**
+ * Alias targets for the `@earendil-works/*` packages the permission
+ * system imports at runtime, so a standalone jiti can load it outside pi's
+ * own loader. Candidates: a node_modules walk-up from this file (a project
+ * install), pi's npm directory, and the pi executable's package root
+ * (Homebrew Cellar and npm-global layouts).
+ */
+function piJitiAliases(): Record<string, string> {
+  const agentDir = permissionSystemAgentDir();
+  const candidates: string[] = [];
+  let dir = path.dirname(fileURLToPath(import.meta.url));
+  for (;;) {
+    candidates.push(path.join(dir, "node_modules"));
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  candidates.push(path.join(agentDir, "npm", "node_modules"));
+  try {
+    const bin = fs.realpathSync("/opt/homebrew/bin/pi");
+    candidates.push(path.resolve(path.dirname(bin), "..", "lib", "node_modules"));
+    candidates.push(path.resolve(path.dirname(bin), "..", "node_modules"));
+  } catch {
+    /* no homebrew pi */
+  }
+  for (const nm of candidates) {
+    const coding = piPackageEntry(path.join(nm, "@earendil-works", "pi-coding-agent"));
+    const tui = piPackageEntry(path.join(nm, "@earendil-works", "pi-tui"));
+    if (coding && tui) {
+      return {
+        "@earendil-works/pi-coding-agent": coding,
+        "@earendil-works/pi-tui": tui,
+      };
+    }
+  }
+  return {};
+}
+
+/**
+ * Load the permission system's service entry with a standalone jiti.
+ * pi's loader runs dynamic `import()` on the native ES loader, which
+ * refuses `.ts` under node_modules — the permission system ships a
+ * TypeScript-only entry, so jiti is the only runtime that can load it
+ * from here (the same recipe inno-agent uses for its chain link).
+ */
+async function loadWithJiti(entry: string): Promise<PermissionSystemModule> {
+  const requireFn = createRequire(import.meta.url);
+  const jitiPath = requireFn.resolve("jiti");
+  const { createJiti } = await import(pathToFileURL(jitiPath).href);
+  const jiti = createJiti(import.meta.url, { moduleCache: false, alias: piJitiAliases() });
+  return (await jiti.import(entry)) as PermissionSystemModule;
+}
+
+/**
+ * Last resort: the service map the permission system publishes on
+ * `globalThis` (ADR 0012; documented in its cross-extension-api.md).
+ * Works when the permission system runs in this process even if none of
+ * the import paths can load its TypeScript entry.
+ */
+function globalThisLocator(): PermissionSystemModule {
+  const key = Symbol.for("@gotgenes/pi-permission-system:session-services");
+  return {
+    getPermissionsService: (sessionId: string) => {
+      const store = globalThis as Record<symbol, unknown>;
+      const services = store[key] as (Map<string, PermissionService> | undefined) | undefined;
+      return services?.get(sessionId);
+    },
+  };
+}
+
+/**
+ * Load the permission system, trying in order: bare import (a project that
+ * installed it as a dependency), standalone jiti on the pi-npm-dir entry,
+ * native file import, and the globalThis service map.
+ */
 async function loadPermissionSystem(): Promise<PermissionSystemModule | undefined> {
   try {
     // Non-literal specifier: bundlers leave the import to runtime
@@ -68,15 +155,24 @@ async function loadPermissionSystem(): Promise<PermissionSystemModule | undefine
     const specifier = PERMISSION_SYSTEM;
     return (await import(specifier)) as PermissionSystemModule;
   } catch {
-    const entry = permissionSystemEntry();
-    if (!entry) return undefined;
+    /* not resolvable from here — fall through */
+  }
+  const entry = permissionSystemEntry();
+  if (entry) {
+    try {
+      return await loadWithJiti(entry);
+    } catch (err) {
+      log(
+        `jiti load of ${PERMISSION_SYSTEM} from ${entry} failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
     try {
       return (await import(pathToFileURL(entry).href)) as PermissionSystemModule;
-    } catch (err) {
-      log(`failed to load ${PERMISSION_SYSTEM} from ${entry}: ${err instanceof Error ? err.message : String(err)}`);
-      return undefined;
+    } catch {
+      /* the native loader cannot take .ts under node_modules — expected */
     }
   }
+  return globalThisLocator();
 }
 
 /** The pi event-bus surface, all this adapter needs. */
@@ -173,6 +269,22 @@ export function createPiExtension(customClassifier?: AutoClassifier, options: Pi
         try {
           const mod = await loadModule();
           service = mod?.getPermissionsService?.(sessionId);
+          // TEMP DIAGNOSTIC (AC_PI_DEBUG): confirm which module instance we
+          // imported and whether its service map answers for this session.
+          if (process.env.AC_PI_DEBUG) {
+            let mapSize = "n/a";
+            try {
+              mapSize = String(
+                Object.keys((globalThis as Record<symbol, unknown>)[Symbol.for("@gotgenes/pi-permission-system:session-services")] ?? {}).length,
+              );
+            } catch {
+              /* ignore */
+            }
+            log(
+              `DIAG: ready fire sessionId=${sessionId} module=${(mod as { url?: string } | undefined)?.url ?? "(no url)"} ` +
+                `getPermissionsService=${typeof mod?.getPermissionsService} mapSize=${mapSize} service=${service ? "yes" : "NO"}`,
+            );
+          }
         } catch {
           warnNoPermissionSystem();
           return;
