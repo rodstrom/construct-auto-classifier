@@ -6,3 +6,4 @@ dist/
 .cache/
 .auto-classifier-config-test-*/
 TODO.md
+TESTS.md
