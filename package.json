@@ -42,9 +42,10 @@
     "./pi": "./dist/pi/pi-plugin.js"
   },
   "scripts": {
-    "build": "bun build ./src/cli.ts --outfile ./dist/cli.js --target node && bun build ./src/adapters/opencode.ts --outfile ./dist/opencode-plugin.js --target node && bun build ./src/adapters/pi.ts --outfile ./dist/pi/pi-plugin.js --target node --external @gotgenes/pi-permission-system --external jiti && bun build ./src/index.ts --outfile ./dist/index.js --target node && tsc --emitDeclarationOnly -p .",
+    "build": "bun run build:bundle && tsc --emitDeclarationOnly -p .",
+    "build:bundle": "bun build ./src/cli.ts --outfile ./dist/cli.js --target node && bun build ./src/adapters/opencode.ts --outfile ./dist/opencode-plugin.js --target node && bun build ./src/adapters/pi.ts --outfile ./dist/pi/pi-plugin.js --target node --external @gotgenes/pi-permission-system --external jiti && bun build ./src/index.ts --outfile ./dist/index.js --target node",
     "build:binary": "bun build --compile --minify ./src/cli.ts --outfile ./dist/auto-classifier",
-    "prepare": "bun run build",
+    "prepare": "bun run build:bundle",
     "test": "bun test",
     "typecheck": "tsc --noEmit -p ."
   },
