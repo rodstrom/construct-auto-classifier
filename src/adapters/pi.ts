@@ -269,22 +269,6 @@ export function createPiExtension(customClassifier?: AutoClassifier, options: Pi
         try {
           const mod = await loadModule();
           service = mod?.getPermissionsService?.(sessionId);
-          // TEMP DIAGNOSTIC (AC_PI_DEBUG): confirm which module instance we
-          // imported and whether its service map answers for this session.
-          if (process.env.AC_PI_DEBUG) {
-            let mapSize = "n/a";
-            try {
-              mapSize = String(
-                Object.keys((globalThis as Record<symbol, unknown>)[Symbol.for("@gotgenes/pi-permission-system:session-services")] ?? {}).length,
-              );
-            } catch {
-              /* ignore */
-            }
-            log(
-              `DIAG: ready fire sessionId=${sessionId} module=${(mod as { url?: string } | undefined)?.url ?? "(no url)"} ` +
-                `getPermissionsService=${typeof mod?.getPermissionsService} mapSize=${mapSize} service=${service ? "yes" : "NO"}`,
-            );
-          }
         } catch {
           warnNoPermissionSystem();
           return;
